@@ -86,6 +86,7 @@ def formatSVGForMkdocs(filename):
 
 def processOnePackage(package, packages, workers, release_start, release_end, verbose):
     base_filename='{}-{}-{}'.format(release_start, release_end, package.strip().replace('/','-'))
+    process_gv_file=False
     if verbose:
         print("Analysing package {}".format(package))
     with open("{}.gv".format(base_filename), 'w') as output_file:
@@ -94,36 +95,39 @@ def processOnePackage(package, packages, workers, release_start, release_end, ve
         writeTag_(release_end, output_file)
         if verbose:
             print("Creating history for package {}".format(package))
+            print("Running: git --no-pager lg origin/{} ^origin/{} --first-parent".format(release_start, release_end))
         tags = sh.sort(
                 sh.grep(
                     sh.git('--no-pager', 'lg', 'origin/'+release_start, '^origin/'+release_end, '--first-parent'),
-                    '-w', '-P', '\s+CMSSW_[0-9]+_[0-9]+_[0-9]+(_pre[0-9]+)?', '-o'),
+                    '-w', '-P', '\s+CMSSW_[0-9]+_[0-9]+_[0-9]+(_pre[0-9]+)?', '-o', _ok_code=[0,1]),
                 '-u')
-
-        tags = tags.stdout.decode().strip().rsplit('\n')
-        tags = [t.strip() for t in tags]
-        tags.sort(key=natural_tag_keys)
-        not_tags = ['^'+release_end] + ['^'+t for t in tags]
-        if verbose:
-            print("Sorted tags", tags)
-            print("Sorted not_tags", not_tags)
-        for tag_start, tag_end in zip(tags, not_tags):
-            print("From {} to {}:\n".format(tag_start, tag_end))
+        if len(tags.stdout.decode()) != 0:
+            process_gv_file = True
+            tags = tags.stdout.decode().strip().rsplit('\n')
+            tags = [t.strip() for t in tags]
+            tags.sort(key=natural_tag_keys)
+            not_tags = ['^'+release_end] + ['^'+t for t in tags]
             if verbose:
-                print("git " + " ".join(['--no-pager', 'lg', '--first-parent', tag_start, tag_end, '--', package.strip()]))
-            commits = sh.git('--no-pager', 'lgh', '--first-parent', tag_start, tag_end, '--', package.strip())
-            if commits:
-                writeCommit_(commits, output_file)
+                print("Sorted tags", tags)
+                print("Sorted not_tags", not_tags)
+            for tag_start, tag_end in zip(tags, not_tags):
+                print("From {} to {}:\n".format(tag_start, tag_end))
                 if verbose:
-                    print("Adding commit(s)")
-            writeTag_(tag_start, output_file)
-        output_file.write("end [label={}]\n".format(release_start))
-        output_file.write("}\n")
-    sh.dot('-Tsvg',
-            '{}.gv'.format(base_filename),
-            '-o{}.svg'.format(base_filename)
-           )
-    formatSVGForMkdocs('{}.svg'.format(base_filename))
+                    print("git " + " ".join(['--no-pager', 'lg', '--first-parent', tag_start, tag_end, '--', package.strip()]))
+                commits = sh.git('--no-pager', 'lgh', '--first-parent', tag_start, tag_end, '--', package.strip())
+                if commits:
+                    writeCommit_(commits, output_file)
+                    if verbose:
+                        print("Adding commit(s)")
+                writeTag_(tag_start, output_file)
+            output_file.write("end [label={}]\n".format(release_start))
+            output_file.write("}\n")
+    if process_gv_file:
+        sh.dot('-Tsvg',
+                '{}.gv'.format(base_filename),
+                '-o{}.svg'.format(base_filename)
+               )
+        formatSVGForMkdocs('{}.svg'.format(base_filename))
     packages.task_done()
     # Add a worker back on the pool
     if verbose:
